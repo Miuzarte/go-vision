@@ -21,9 +21,11 @@ type Config struct {
 	NumKeyPoints  int // 默认 17
 
 	// 可选参数
-	UseCuda           bool // (可选) 是否启用 CUDA
-	NumThreads        int  // (可选) ONNX 线程数, 默认由CPU核心数决定
-	EnableCpuMemArena bool // (可选) 是否开启 ONNX 内存池
+	UseCuda            bool   // (可选) 是否启用 CUDA
+	UseTensorRT        bool   // (可选) 是否启用 TensorRT
+	TensorRTPluginPath string // (可选) NvTensorRTRTX EP ABI 插件 DLL 路径
+	NumThreads         int    // (可选) ONNX 线程数, 默认由CPU核心数决定
+	EnableCpuMemArena  bool   // (可选) 是否开启 ONNX 内存池
 }
 
 // DetResult 目标检测结果

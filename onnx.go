@@ -14,8 +14,10 @@ type OnnxConfig struct {
 	// 必填参数
 	OnnxRuntimeLibPath string // onnxruntime.dll (或 .so, .dylib) 的路径
 	// 可选参数
-	UseCuda    bool // (可选) 是否启用 CUDA
-	NumThreads int  // (可选) ONNX 线程数, 默认由CPU核心数决定
+	UseCuda            bool   // (可选) 是否启用 CUDA
+	UseTensorRT        bool   // (可选) 是否启用 TensorRT
+	TensorRTPluginPath string // (可选，UseTensorRT=true 时必填) NvTensorRTRTX EP ABI 插件 DLL 路径
+	NumThreads         int    // (可选) ONNX 线程数, 默认由CPU核心数决定
 
 	// EnableCpuMemArena 控制 ONNX 的内存池策略
 	// false (默认): 禁用内存池，推理速度稍慢，但 Destroy 后立即归还内存给 OS ，解决内存滞留问题
@@ -59,9 +61,48 @@ func (cfg *OnnxConfig) New() error {
 	}
 
 	// 启用CUDA
-	if cfg.UseCuda {
+	if cfg.UseCuda && !cfg.UseTensorRT {
 		if err := options.EnableCUDA(); err != nil {
 			return fmt.Errorf("启用 CUDA 失败: %w", err)
+		}
+	}
+
+	// 启用TensorRT RTX (EP ABI 插件注册 + V2 device API)
+	if cfg.UseTensorRT {
+		if cfg.TensorRTPluginPath == "" {
+			return fmt.Errorf("UseTensorRT=true 时 TensorRTPluginPath 不能为空")
+		}
+		if err := onnxEngine.RegisterExecutionProviderLibrary("NvTensorRTRTXExecutionProvider", cfg.TensorRTPluginPath); err != nil {
+			return fmt.Errorf("注册 TensorRT RTX EP 插件失败: %w", err)
+		}
+
+		devices, err := onnxEngine.GetEpDevices()
+		if err != nil {
+			return fmt.Errorf("枚举 EP 设备失败: %w", err)
+		}
+
+		var trtDevices []uintptr
+		var deviceInfo []string
+		for _, d := range devices {
+			name, err := onnxEngine.GetEpDeviceName(d)
+			if err != nil {
+				deviceInfo = append(deviceInfo, fmt.Sprintf("(err:%v)", err))
+				continue
+			}
+			deviceInfo = append(deviceInfo, fmt.Sprintf("%q", name))
+			if name == "NvTensorRTRTXExecutionProvider" || name == "NvTensorRTRTX" {
+				trtDevices = append(trtDevices, d)
+			}
+		}
+		if len(trtDevices) == 0 {
+			return fmt.Errorf("未找到 NvTensorRTRTX EP 设备 (共 %d 个设备: %v)", len(devices), deviceInfo)
+		}
+
+		trtOpts := map[string]string{
+			"enable_cuda_graph": "0",
+		}
+		if err := options.AppendExecutionProviderV2(trtDevices, trtOpts); err != nil {
+			return fmt.Errorf("启用 TensorRT RTX 失败: %w", err)
 		}
 	}
 	cfg.SessionOptions = options
