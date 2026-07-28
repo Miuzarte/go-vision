@@ -1,12 +1,13 @@
 package yolo26
 
 import (
-	ort "github.com/getcharzp/onnxruntime_purego"
-	"github.com/up-zero/gotool/imageutil"
 	"image"
 	"image/color"
 	"image/draw"
 	"math"
+
+	ort "github.com/getcharzp/onnxruntime_purego"
+	"github.com/up-zero/gotool/imageutil"
 )
 
 // preprocess 预处理
@@ -23,18 +24,44 @@ func preprocess(img image.Image, inputSize int) (*ort.Value, imageParams, error)
 	newW := int(float32(params.origW) * scale)
 	newH := int(float32(params.origH) * scale)
 
+	if params.origW == inputSize && params.origH == inputSize {
+		newW, newH = 0, 0
+	}
+
 	resized := imageutil.Resize(img, newW, newH)
 
-	// 准备 Tensor 数据 (CHW + Normalize 0-1)
-	data := make([]float32, 3*inputSize*inputSize)
-	for y := 0; y < newH; y++ {
-		for x := 0; x < newW; x++ {
-			r, g, b, _ := resized.At(x, y).RGBA()
+	resizedW := resized.Bounds().Dx()
+	resizedH := resized.Bounds().Dy()
 
-			idx := y*inputSize + x
-			data[idx] = float32(r) / 65535.0                       // R
-			data[inputSize*inputSize+idx] = float32(g) / 65535.0   // G
-			data[2*inputSize*inputSize+idx] = float32(b) / 65535.0 // B
+	data := make([]float32, 3*inputSize*inputSize)
+
+	if rgba, ok := resized.(*image.RGBA); ok {
+		pix := rgba.Pix
+		stride := rgba.Stride
+		planeSize := inputSize * inputSize
+
+		for y := range resizedH {
+			rowOff := y * stride
+			baseOff := y * inputSize
+
+			for x := range resizedW {
+				off := rowOff + x*4
+				idx := baseOff + x
+				data[idx] = float32(pix[off]) / 255.0
+				data[planeSize+idx] = float32(pix[off+1]) / 255.0
+				data[2*planeSize+idx] = float32(pix[off+2]) / 255.0
+			}
+		}
+	} else {
+		for y := range resizedH {
+			for x := range resizedW {
+				r, g, b, _ := resized.At(x, y).RGBA()
+
+				idx := y*inputSize + x
+				data[idx] = float32(r) / 65535.0                       // R
+				data[inputSize*inputSize+idx] = float32(g) / 65535.0   // G
+				data[2*inputSize*inputSize+idx] = float32(b) / 65535.0 // B
+			}
 		}
 	}
 

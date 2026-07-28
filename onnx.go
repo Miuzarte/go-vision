@@ -99,7 +99,7 @@ func (cfg *OnnxConfig) New() error {
 		}
 
 		trtOpts := map[string]string{
-			"enable_cuda_graph": "0",
+			"nv_runtime_cache_path": "./trt_cache",
 		}
 		if err := options.AppendExecutionProviderV2(trtDevices, trtOpts); err != nil {
 			return fmt.Errorf("启用 TensorRT RTX 失败: %w", err)

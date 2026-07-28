@@ -12,3 +12,7 @@ require (
 	github.com/ebitengine/purego v0.9.1 // indirect
 	golang.org/x/text v0.32.0 // indirect
 )
+
+replace github.com/getcharzp/onnxruntime_purego => B:\Git\onnxruntime_purego
+
+replace github.com/up-zero/gotool => B:\Git\gotool
