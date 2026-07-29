@@ -2,16 +2,18 @@ package yolo26
 
 import (
 	"fmt"
+	"image"
+
 	"github.com/getcharzp/go-vision"
 	ort "github.com/getcharzp/onnxruntime_purego"
 	"github.com/up-zero/gotool/convertutil"
-	"image"
 )
 
 // DetEngine YOLO26-det Engine
 type DetEngine struct {
-	session *ort.Session
-	config  Config
+	session     *ort.Session
+	config      Config
+	cudaMemInfo ort.MemoryInfoHandle
 }
 
 // NewDetEngine 初始化检测引擎
@@ -28,14 +30,24 @@ func NewDetEngine(cfg Config) (*DetEngine, error) {
 		return nil, fmt.Errorf("创建 ONNX 会话失败: %w", err)
 	}
 
+	cudaMemInfo, err := ort.CreateCudaMemoryInfo(0)
+	if err != nil {
+		return nil, fmt.Errorf("创建 CUDA 内存信息失败: %w", err)
+	}
+
 	return &DetEngine{
-		session: session,
-		config:  cfg,
+		session:     session,
+		config:      cfg,
+		cudaMemInfo: cudaMemInfo,
 	}, nil
 }
 
 // Destroy 释放相关资源
 func (e *DetEngine) Destroy() {
+	if e.cudaMemInfo != 0 {
+		ort.ReleaseMemoryInfo(e.cudaMemInfo)
+		e.cudaMemInfo = 0
+	}
 	if e.session != nil {
 		e.session.Destroy()
 	}
@@ -43,31 +55,45 @@ func (e *DetEngine) Destroy() {
 
 // Predict 执行检测推理
 func (e *DetEngine) Predict(img image.Image) ([]DetResult, error) {
-	// 预处理
 	inputTensor, params, err := preprocess(img, e.config.InputSize)
 	if err != nil {
 		return nil, fmt.Errorf("预处理失败: %w", err)
 	}
 	defer inputTensor.Destroy()
 
-	// 推理
-	inputValues := map[string]*ort.Value{
-		"images": inputTensor,
-	}
-	outputValues, err := e.session.Run(inputValues)
+	outputData := make([]float32, 1*300*6)
+	outputTensor, err := ort.NewTensor([]int64{1, 300, 6}, outputData)
 	if err != nil {
+		return nil, fmt.Errorf("创建输出张量失败: %w", err)
+	}
+	defer outputTensor.Destroy()
+
+	binding, err := e.session.CreateIoBinding()
+	if err != nil {
+		return nil, fmt.Errorf("创建 IoBinding 失败: %w", err)
+	}
+	defer binding.Release()
+
+	if err := binding.BindInput("images", inputTensor); err != nil {
+		return nil, fmt.Errorf("绑定输入失败: %w", err)
+	}
+	if err := binding.BindOutput("output0", outputTensor); err != nil {
+		return nil, fmt.Errorf("绑定输出失败: %w", err)
+	}
+
+	if err := binding.SynchronizeBoundInputs(); err != nil {
+		return nil, fmt.Errorf("同步输入失败: %w", err)
+	}
+
+	if err := binding.RunWithBinding(0); err != nil {
 		return nil, fmt.Errorf("推理失败: %w", err)
 	}
-	outputValue := outputValues["output0"]
-	defer outputValue.Destroy()
 
-	// Output Shape: [1, 300, 6]
-	data, err := ort.GetTensorData[float32](outputValue)
-	if err != nil {
-		return nil, fmt.Errorf("获取输出数据失败: %w", err)
+	if err := binding.SynchronizeBoundOutputs(); err != nil {
+		return nil, fmt.Errorf("同步输出失败: %w", err)
 	}
 
-	return e.postprocess(data, params), nil
+	return e.postprocess(outputData, params), nil
 }
 
 // postprocess 后处理，输出结果解析
