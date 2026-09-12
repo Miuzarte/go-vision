@@ -10,8 +10,19 @@ import (
 	"github.com/up-zero/gotool/imageutil"
 )
 
-// preprocess 预处理
+// preprocess 预处理 (每次分配新的 float32 缓冲区)
 func preprocess(img image.Image, inputSize int) (*ort.Value, imageParams, error) {
+	data := make([]float32, 3*inputSize*inputSize)
+	params := preprocessInto(img, inputSize, data)
+
+	tensor, err := ort.NewTensor([]int64{1, 3, int64(inputSize), int64(inputSize)}, data)
+	return tensor, params, err
+}
+
+// preprocessInto 预处理到调用方提供的缓冲区
+//
+// data 长度至少为 3*inputSize*inputSize, 常驻张量复用场景下可避免每帧重新分配
+func preprocessInto(img image.Image, inputSize int, data []float32) imageParams {
 	bounds := img.Bounds()
 	params := imageParams{
 		origW: bounds.Dx(),
@@ -32,8 +43,6 @@ func preprocess(img image.Image, inputSize int) (*ort.Value, imageParams, error)
 
 	resizedW := resized.Bounds().Dx()
 	resizedH := resized.Bounds().Dy()
-
-	data := make([]float32, 3*inputSize*inputSize)
 
 	if rgba, ok := resized.(*image.RGBA); ok {
 		pix := rgba.Pix
@@ -65,8 +74,7 @@ func preprocess(img image.Image, inputSize int) (*ort.Value, imageParams, error)
 		}
 	}
 
-	tensor, err := ort.NewTensor([]int64{1, 3, int64(inputSize), int64(inputSize)}, data)
-	return tensor, params, err
+	return params
 }
 
 func sigmoid(x float32) float32 {

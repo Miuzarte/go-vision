@@ -4,3 +4,4 @@
 
 *_weights
 lib
+trt_cache/

@@ -3,7 +3,9 @@ package vision
 import (
 	"fmt"
 	ort "github.com/getcharzp/onnxruntime_purego"
+	"os"
 	"runtime"
+	"strconv"
 	"sync"
 )
 
@@ -19,6 +21,10 @@ type OnnxConfig struct {
 	TensorRTPluginPath string // (可选，UseTensorRT=true 时必填) NvTensorRTRTX EP ABI 插件 DLL 路径
 	NumThreads         int    // (可选) ONNX 线程数, 默认由CPU核心数决定
 
+	// TensorRTOptions 追加 / 覆盖 NvTensorRTRTX EP 的 provider options
+	// 常用: nv_use_sync_gpu_allocator=1 关闭 cudaMallocAsync 异步显存池 (显存紧张时该池不可靠)
+	TensorRTOptions map[string]string
+
 	// EnableCpuMemArena 控制 ONNX 的内存池策略
 	// false (默认): 禁用内存池，推理速度稍慢，但 Destroy 后立即归还内存给 OS ，解决内存滞留问题
 	// true: 启用内存池，推理速度最快，但 Destroy 后内存会被缓存以供复用
@@ -31,6 +37,23 @@ var (
 	onnxEngine *ort.Engine
 )
 
+// ortLogLevel 读取 ORT_LOG_LEVEL 环境变量
+//
+// 0=verbose 1=info 2=warning 3=error (默认) 4=fatal
+// EP 插件的告警与分配追踪只在 1 / 2 时可见, 排查 CUDA 非法访问时用得上
+func ortLogLevel() ort.LoggingLevel {
+	level := ort.LogError
+	v := os.Getenv("ORT_LOG_LEVEL")
+	if v == "" {
+		return level
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < int(ort.LogVerbose) || n > int(ort.LogFatal) {
+		return level
+	}
+	return ort.LoggingLevel(n)
+}
+
 // New 初始化 ONNX 环境
 func (cfg *OnnxConfig) New() error {
 	// 初始化 ONNX Runtime
@@ -38,7 +61,7 @@ func (cfg *OnnxConfig) New() error {
 		return fmt.Errorf("OnnxRuntimeLibPath 不能为空")
 	}
 	once.Do(func() {
-		onnxEngine, initErr = ort.NewEngine(cfg.OnnxRuntimeLibPath)
+		onnxEngine, initErr = ort.NewEngineWithLogLevel(cfg.OnnxRuntimeLibPath, ortLogLevel())
 	})
 	if initErr != nil {
 		return fmt.Errorf("初始化 ONNX Engine 失败: %w", initErr)
@@ -100,6 +123,9 @@ func (cfg *OnnxConfig) New() error {
 
 		trtOpts := map[string]string{
 			"nv_runtime_cache_path": "./trt_cache",
+		}
+		for k, v := range cfg.TensorRTOptions {
+			trtOpts[k] = v
 		}
 		if err := options.AppendExecutionProviderV2(trtDevices, trtOpts); err != nil {
 			return fmt.Errorf("启用 TensorRT RTX 失败: %w", err)

@@ -26,6 +26,15 @@ type Config struct {
 	TensorRTPluginPath string // (可选) NvTensorRTRTX EP ABI 插件 DLL 路径
 	NumThreads         int    // (可选) ONNX 线程数, 默认由CPU核心数决定
 	EnableCpuMemArena  bool   // (可选) 是否开启 ONNX 内存池
+
+	// TensorRTOptions (可选) NvTensorRTRTX EP provider options, 覆盖默认项
+	// 常用: nv_use_sync_gpu_allocator=1 关闭 cudaMallocAsync 异步显存池
+	TensorRTOptions map[string]string
+
+	// UseDeviceBuffers (可选) 输入/输出张量直接用我们自己分配的显存做零拷贝 I/O 绑定
+	// 好处: 每帧不再产生设备侧分配/释放 (显存紧张时这类抖动正是 CUDA 粘性错误的温床)
+	// 仅 Windows 支持, 初始化失败时 NewDetEngine 返回错误
+	UseDeviceBuffers bool
 }
 
 // DetResult 目标检测结果
